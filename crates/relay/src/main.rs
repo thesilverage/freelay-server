@@ -1,11 +1,9 @@
 use anyhow::Context;
 use anyhow::Result;
 use axum::middleware;
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use relay::cli::{print_auth_message, sign_stdin, verify_stdin};
+use clap::{Args, Parser, Subcommand};
 use relay::server::AllowedHost;
 use relay::stores::filesystem::FileSystemStore;
-use serde_json::json;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -19,7 +17,6 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 use y_sweet_core::{
-    auth::Authenticator,
     config::Config,
     metrics::RelayMetrics,
     store::{
@@ -32,42 +29,29 @@ use y_sweet_core::{
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn generate_public_key_from_private(private_key_b64: &str) -> Result<String, anyhow::Error> {
-    use p256::SecretKey;
-    use y_sweet_core::auth::BASE64_CUSTOM;
-
-    let private_key_bytes = BASE64_CUSTOM.decode(private_key_b64.as_bytes())?;
-    let secret_key = SecretKey::from_slice(&private_key_bytes)?;
-    let public_key = secret_key.public_key();
-    let public_key_bytes = public_key.to_sec1_bytes();
-
-    Ok(BASE64_CUSTOM.encode(&public_key_bytes))
-}
-
-fn generate_ed25519_public_key_from_private(
-    private_key_b64: &str,
-) -> Result<String, anyhow::Error> {
-    use ed25519_dalek::{SecretKey as Ed25519SecretKey, SigningKey};
-    use y_sweet_core::auth::BASE64_CUSTOM;
-
-    let private_key_bytes = BASE64_CUSTOM.decode(private_key_b64.as_bytes())?;
-    let secret_key: Ed25519SecretKey = private_key_bytes.as_slice().try_into()?;
-    let signing_key = SigningKey::from(&secret_key);
-    let public_key_bytes = signing_key.verifying_key().to_bytes();
-
-    Ok(BASE64_CUSTOM.encode(&public_key_bytes))
-}
-
-#[derive(Clone, ValueEnum)]
-enum KeyType {
-    #[value(name = "legacy")]
-    Legacy,
-    #[value(name = "HMAC256")]
-    Hmac256,
-    #[value(name = "ES256")]
-    Es256,
-    #[value(name = "EdDSA")]
-    EdDsa,
+fn load_control_config(path: &std::path::Path, config: &Config) -> Result<relay::control::http::Config> {
+    #[derive(serde::Deserialize)]
+    struct Section {
+        control: relay::control::http::Config,
+    }
+    let section: Section = toml::from_str(&std::fs::read_to_string(path)?)?;
+    anyhow::ensure!(
+        config.auth.is_empty(),
+        "Freelay generates its own ephemeral token key; remove [[auth]]"
+    );
+    anyhow::ensure!(
+        config.webhooks.is_empty(),
+        "Freelay does not support external webhooks"
+    );
+    relay::control::identity::canonical_url(
+        config.server.url.as_deref().context("[server].url is required")?,
+    )?;
+    section.control.transfer_url_ttl(&config.store)?;
+    anyhow::ensure!(
+        (60..=3600).contains(&section.control.token_ttl_seconds),
+        "data token TTL must be 60..3600 seconds"
+    );
+    Ok(section.control)
 }
 
 #[derive(Parser)]
@@ -78,12 +62,19 @@ struct Opts {
 
 #[derive(Subcommand)]
 enum ServSubcommand {
-    Serve {
-        /// Path to configuration file
+    /// Local Freelay administration; never exposed over HTTP.
+    Control {
         #[clap(short = 'c', long = "config")]
-        config: Option<PathBuf>,
+        config: PathBuf,
+        #[clap(subcommand)]
+        command: relay::control::maintenance::Command,
+    },
+    Serve {
+        /// Path to the required configuration file
+        #[clap(short = 'c', long = "config", default_value = "freelay.toml")]
+        config: PathBuf,
 
-        // Legacy CLI arguments - kept for backward compatibility
+        // Optional overrides of the required configuration file.
         #[clap()]
         store: Option<String>,
 
@@ -95,9 +86,6 @@ enum ServSubcommand {
         metrics_port: Option<u16>,
         #[clap(long)]
         checkpoint_freq_seconds: Option<u64>,
-
-        #[clap(long)]
-        auth: Option<String>,
 
         #[clap(long)]
         url: Option<String>,
@@ -114,22 +102,14 @@ enum ServSubcommand {
 
     /// Run any pending data migrations against the configured store, then exit.
     Migrate {
-        /// Path to relay.toml (defaults to standard discovery).
+        /// Path to freelay.toml (defaults to standard discovery).
         #[clap(short = 'c', long = "config")]
         config: Option<PathBuf>,
 
         /// Store URL override: `s3://bucket[/prefix]` or a filesystem path.
-        /// If omitted, the configured store from relay.toml/env is used.
+        /// If omitted, the configured store from freelay.toml/env is used.
         #[clap(long)]
         store: Option<String>,
-    },
-
-    GenAuth {
-        #[clap(long)]
-        json: bool,
-
-        #[clap(long, default_value = "legacy")]
-        key_type: KeyType,
     },
 
     /// Convert from a YDoc v1 update format to a .ysweet file.
@@ -149,22 +129,6 @@ enum ServSubcommand {
     Config {
         #[clap(subcommand)]
         cmd: ConfigSubcommand,
-    },
-
-    Sign {
-        #[clap(long)]
-        auth: String,
-    },
-
-    Verify {
-        #[clap(long)]
-        auth: String,
-
-        #[clap(long)]
-        doc_id: Option<String>,
-
-        #[clap(long)]
-        file_hash: Option<String>,
     },
 
     /// Subdoc-related maintenance commands.
@@ -192,7 +156,7 @@ enum DocCommand {
     /// List S3 object versions for a single doc (newest first).
     /// Requires the bucket to have versioning enabled.
     Versions {
-        /// Path to relay.toml (defaults to standard discovery).
+        /// Path to freelay.toml (defaults to standard discovery).
         #[clap(short = 'c', long = "config")]
         config: Option<PathBuf>,
 
@@ -216,7 +180,7 @@ enum DocCommand {
     /// Fetch the raw `data.ysweet` bytes for a doc and write them to a file
     /// (or stdout). With `--version`, fetches a specific past version.
     Get {
-        /// Path to relay.toml (defaults to standard discovery).
+        /// Path to freelay.toml (defaults to standard discovery).
         #[clap(short = 'c', long = "config")]
         config: Option<PathBuf>,
 
@@ -251,7 +215,7 @@ enum DocCommand {
 
 #[derive(Args)]
 struct DocRestoreArgs {
-    /// Path to relay.toml (defaults to standard discovery).
+    /// Path to freelay.toml (defaults to standard discovery).
     #[clap(short = 'c', long = "config")]
     config: Option<PathBuf>,
 
@@ -330,11 +294,11 @@ struct InspectInput {
     relay_id: Option<String>,
 
     /// Store URL override: `s3://bucket[/prefix]` or a filesystem path.
-    /// If omitted, the configured store from relay.toml/env is used.
+    /// If omitted, the configured store from freelay.toml/env is used.
     #[clap(long)]
     store: Option<String>,
 
-    /// Path to relay.toml (defaults to standard discovery).
+    /// Path to freelay.toml (defaults to standard discovery).
     #[clap(short = 'c', long = "config")]
     config: Option<PathBuf>,
 }
@@ -345,15 +309,15 @@ enum SubdocsCommand {
     /// walking `filemeta_v0`, fetching each child doc, encoding its
     /// snapshot, and writing the result back to the parent.
     ///
-    /// The store is taken from the relay config (relay.toml + env vars,
+    /// The store is taken from the relay config (freelay.toml + env vars,
     /// same resolution as `serve`) unless `--store` is given as an override.
     Index {
-        /// Path to relay.toml (defaults to standard discovery).
+        /// Path to freelay.toml (defaults to standard discovery).
         #[clap(short = 'c', long = "config")]
         config: Option<PathBuf>,
 
         /// Store URL override: `s3://bucket[/prefix]` or a filesystem path.
-        /// If omitted, the configured store from relay.toml/env is used.
+        /// If omitted, the configured store from freelay.toml/env is used.
         #[clap(long)]
         store: Option<String>,
 
@@ -383,14 +347,14 @@ enum ConfigSubcommand {
     /// Validate a TOML configuration file
     Validate {
         /// Path to configuration file to validate
-        #[clap(short = 'c', long = "config", default_value = "relay.toml")]
+        #[clap(short = 'c', long = "config", default_value = "freelay.toml")]
         config: PathBuf,
     },
 
     /// Show the current configuration (merged from file and environment)
     Show {
         /// Path to configuration file
-        #[clap(short = 'c', long = "config", default_value = "relay.toml")]
+        #[clap(short = 'c', long = "config", default_value = "freelay.toml")]
         config: PathBuf,
     },
 }
@@ -403,7 +367,6 @@ fn load_config_for_serve_args(
     host: &Option<IpAddr>,
     metrics_port: &Option<u16>,
     checkpoint_freq_seconds: &Option<u64>,
-    auth: &Option<String>,
     url: &Option<String>,
     allowed_hosts: &Option<Vec<String>>,
 ) -> Result<Config> {
@@ -433,7 +396,7 @@ fn load_config_for_serve_args(
                 region: env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
                 endpoint: String::new(),
                 path_style: false,
-                presigned_url_expiration: 3600,
+                presigned_url_expiration: 900,
                 access_key_id: None,
                 secret_access_key: None,
                 credentials_file: None,
@@ -463,25 +426,6 @@ fn load_config_for_serve_args(
 
     if let Some(host) = host {
         config.server.host = host.to_string();
-    }
-
-    if let Some(auth_key) = auth {
-        if config.auth.is_empty() {
-            config.auth.push(y_sweet_core::config::AuthKeyConfig {
-                key_id: None,
-                private_key: Some(auth_key.clone()),
-                public_key: None,
-                allowed_token_types: vec![
-                    y_sweet_core::config::TokenType::Document,
-                    y_sweet_core::config::TokenType::File,
-                    y_sweet_core::config::TokenType::Server,
-                    y_sweet_core::config::TokenType::Prefix,
-                ],
-            });
-        } else {
-            // Update the first auth entry
-            config.auth[0].private_key = Some(auth_key.clone());
-        }
     }
 
     if let Some(url) = url {
@@ -586,7 +530,7 @@ fn s3_config_from_store(s3_config: &y_sweet_core::config::S3StoreConfig) -> Resu
 fn build_s3_store(s3_config: &y_sweet_core::config::S3StoreConfig) -> Result<BuiltStore> {
     let config = s3_config_from_store(s3_config)?;
     let credentials_file = config.credentials_file.clone();
-    let store = S3Store::new(config);
+    let store = S3Store::new(config).with_presigned_url_expiration(s3_config.presigned_url_expiration);
 
     let creds_reload = credentials_file.map(|path| {
         let fallback = match (
@@ -639,7 +583,7 @@ fn get_store_from_config(
 }
 
 /// Resolve a store for an offline subcommand: explicit `--store` override
-/// wins; otherwise load relay.toml (default discovery if `config` is None)
+/// wins; otherwise load freelay.toml (default discovery if `config` is None)
 /// and use its configured store.
 fn build_store_for_subcommand(
     store_override: Option<&str>,
@@ -691,8 +635,8 @@ async fn resolve_inspect_input(input: &InspectInput) -> Result<(String, Vec<u8>)
 
 fn get_store_from_opts(store_path: &str) -> Result<Box<dyn Store>> {
     if store_path.starts_with("s3://") {
-        // Set the RELAY_SERVER_STORAGE environment variable so S3Config::from_env can use it
-        env::set_var("RELAY_SERVER_STORAGE", store_path);
+        // Set the FREELAY_SERVER_STORAGE environment variable so S3Config::from_env can use it
+        env::set_var("FREELAY_SERVER_STORAGE", store_path);
 
         // Use the unified S3Config::from_env method
         let config = S3Config::from_env(None, None)?;
@@ -817,20 +761,18 @@ async fn main() -> Result<()> {
         metrics_port,
         checkpoint_freq_seconds,
         store,
-        auth,
         url,
         allowed_hosts,
         migrate: _,
     } = &opts.subcmd
     {
         loaded_serve_config = Some(load_config_for_serve_args(
-            config.as_ref(),
+            Some(config),
             store,
             port,
             host,
             metrics_port,
             checkpoint_freq_seconds,
-            auth,
             url,
             allowed_hosts,
         )?);
@@ -854,32 +796,37 @@ async fn main() -> Result<()> {
         .init();
 
     match &opts.subcmd {
-        ServSubcommand::Serve { migrate, .. } => {
-            let config = loaded_serve_config
+        ServSubcommand::Control {
+            config: path,
+            command,
+        } => {
+            let config = Config::load(Some(path))?;
+            let control = load_control_config(path, &config)?;
+            let transfer_url_ttl = control.transfer_url_ttl(&config.store)?;
+            let store = get_store_from_config(&config.store)?
+                .context("Freelay requires a persistent store")?;
+            let result = relay::control::maintenance::run(
+                &control, transfer_url_ttl, command, Arc::from(store.store),
+            ).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        ServSubcommand::Serve { migrate, config: config_path, .. } => {
+            let mut config = loaded_serve_config
                 .take()
                 .expect("serve config should be loaded before tracing initialization");
 
-            // Initialize logging based on config
-            let log_level = &config.logging.level;
-            tracing::info!("Using log level: {}", log_level);
+            // Keep control-plane configuration at the application boundary.
+            let control_config = load_control_config(config_path, &config)?;
+            let transfer_url_ttl = control_config.transfer_url_ttl(&config.store)?;
+            let public_url = config.server.url.as_deref()
+                .context("[server].url is required")?;
+            let control = relay::control::http::Control::new(
+                control_config, public_url, transfer_url_ttl,
+            )?;
+            config.server.url = Some(control.public_base_url.clone());
 
-            // Create authenticator from config
-            let mut auth = if !config.auth.is_empty() {
-                Some(Authenticator::from_multi_key_config(&config.auth)?)
-            } else {
-                tracing::warn!("No auth key set. Only use this for local development!");
-                None
-            };
-
-            // Set expected audience for CWT validation if server URL is configured
-            if let Some(ref mut authenticator) = auth {
-                authenticator.set_expected_audience(config.server.url.clone());
-                if let Some(ref url) = config.server.url {
-                    tracing::info!("CWT audience validation enabled for: {}", url);
-                } else {
-                    return Err(anyhow::anyhow!("Server URL is required"));
-                }
-            }
+            tracing::info!("Using log level: {}", config.logging.level);
+            let auth = Some(control.tokens.verifier());
 
             // Parse server host
             let server_host: IpAddr = config
@@ -970,19 +917,7 @@ async fn main() -> Result<()> {
                 });
             }
 
-            // Use webhook configs from configuration (TOML file or env vars)
-            let webhook_configs = if config.webhooks.is_empty() {
-                // Fallback to environment variable for backward compatibility
-                relay::webhook::load_webhook_configs()
-            } else {
-                Some(config.webhooks.clone())
-            };
-
-            if let Some(ref configs) = webhook_configs {
-                tracing::info!("Loaded {} webhook configurations", configs.len());
-            }
-
-            let server = relay::server::Server::new(
+            let mut server = relay::server::Server::new(
                 store,
                 std::time::Duration::from_secs(config.server.checkpoint_freq_seconds),
                 auth,
@@ -990,18 +925,40 @@ async fn main() -> Result<()> {
                 allowed_hosts,
                 token.clone(),
                 config.server.doc_gc,
-                webhook_configs,
+                None,
             )
             .await?;
 
+            server.set_read_only_signal(control.writes.read_only.clone());
+
             let redact_errors = config.server.redact_errors;
             let server = Arc::new(server);
+            {
+                if let y_sweet_core::config::StoreConfig::Filesystem(filesystem) = &config.store {
+                    control.writes.add_path(PathBuf::from(&filesystem.path));
+                }
+                let guarded = control.clone();
+                let guarded_server = server.clone();
+                let guard_token = token.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            _ = guard_token.cancelled() => break,
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {
+                                if guarded.writes.refresh() {
+                                    tracing::warn!("Freelay entered server-wide read-only mode; closing document connections");
+                                    guarded_server.interrupt_doc_sockets();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            let routes = control.mount(server.routes())?;
 
             let main_handle = tokio::spawn({
-                let server = server.clone();
                 let token = token.clone();
                 async move {
-                    let routes = server.routes_with_metrics();
                     let app = routes.layer(middleware::from_fn(
                         relay::server::Server::version_header_middleware,
                     ));
@@ -1071,127 +1028,6 @@ async fn main() -> Result<()> {
             }
             tracing::info!("Server shut down.");
         }
-        ServSubcommand::GenAuth { json, key_type } => {
-            let auth = match key_type {
-                KeyType::Legacy => Authenticator::gen_key_legacy()?,
-                KeyType::Hmac256 => Authenticator::gen_key_hmac()?,
-                KeyType::Es256 => Authenticator::gen_key_ecdsa()?,
-                KeyType::EdDsa => Authenticator::gen_key_ed25519()?,
-            };
-
-            // Generate a key-id using nanoid
-            let key_id = nanoid::nanoid!();
-
-            if *json {
-                let mut result = serde_json::Map::new();
-
-                // Add key-id to output
-                result.insert("key_id".to_string(), json!(key_id));
-
-                // Generate appropriate server token based on key type
-                match auth.key_material() {
-                    y_sweet_core::auth::AuthKeyMaterial::Legacy(_) => {
-                        // Generate legacy format server token
-                        let server_token = auth.server_token_legacy()?;
-                        result.insert("server_token".to_string(), json!(server_token));
-                    }
-                    _ => {
-                        // Generate CWT server token for modern keys
-                        let server_token = auth.server_token()?;
-                        result.insert("server_token".to_string(), json!(server_token));
-                    }
-                };
-
-                match auth.key_material() {
-                    y_sweet_core::auth::AuthKeyMaterial::Legacy(key_bytes) => {
-                        result.insert(
-                            "private_key".to_string(),
-                            json!(y_sweet_core::auth::b64_encode(key_bytes)),
-                        );
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::Hmac256(key_bytes) => {
-                        result.insert(
-                            "private_key".to_string(),
-                            json!(y_sweet_core::auth::b64_encode(key_bytes)),
-                        );
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::EcdsaP256Private(key_bytes) => {
-                        let private_key_b64 = y_sweet_core::auth::b64_encode(key_bytes);
-                        result.insert("private_key".to_string(), json!(private_key_b64));
-
-                        // Also generate and include public key
-                        if let Ok(public_key) = generate_public_key_from_private(&private_key_b64) {
-                            result.insert("public_key".to_string(), json!(public_key));
-                        }
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::EcdsaP256Public(key_bytes) => {
-                        result.insert(
-                            "public_key".to_string(),
-                            json!(y_sweet_core::auth::b64_encode(key_bytes)),
-                        );
-                        // No private_key field for public keys!
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::Ed25519Private(key_bytes) => {
-                        let private_key_b64 = y_sweet_core::auth::b64_encode(key_bytes);
-                        result.insert("private_key".to_string(), json!(private_key_b64));
-
-                        // Also generate and include public key
-                        if let Ok(public_key) =
-                            generate_ed25519_public_key_from_private(&private_key_b64)
-                        {
-                            result.insert("public_key".to_string(), json!(public_key));
-                        }
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::Ed25519Public(key_bytes) => {
-                        result.insert(
-                            "public_key".to_string(),
-                            json!(y_sweet_core::auth::b64_encode(key_bytes)),
-                        );
-                        // No private_key field for public keys!
-                    }
-                }
-
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::Value::Object(result))?
-                );
-            } else {
-                println!("Key ID: {}", key_id);
-                println!();
-                print_auth_message(&auth);
-
-                // Print additional info based on key type
-                match auth.key_material() {
-                    y_sweet_core::auth::AuthKeyMaterial::EcdsaP256Private(key_bytes) => {
-                        let private_key_b64 = y_sweet_core::auth::b64_encode(key_bytes);
-                        if let Ok(public_key) = generate_public_key_from_private(&private_key_b64) {
-                            println!("Public key for ES256:");
-                            println!("   {}", public_key);
-                            println!();
-                        }
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::EcdsaP256Public(_) => {
-                        println!("Note: This is a public key - it can only verify tokens, not create them.");
-                        println!();
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::Ed25519Private(key_bytes) => {
-                        let private_key_b64 = y_sweet_core::auth::b64_encode(key_bytes);
-                        if let Ok(public_key) =
-                            generate_ed25519_public_key_from_private(&private_key_b64)
-                        {
-                            println!("Public key for EdDSA:");
-                            println!("   {}", public_key);
-                            println!();
-                        }
-                    }
-                    y_sweet_core::auth::AuthKeyMaterial::Ed25519Public(_) => {
-                        println!("Note: This is a public key - it can only verify tokens, not create them.");
-                        println!();
-                    }
-                    _ => {}
-                }
-            }
-        }
         ServSubcommand::ConvertFromUpdate { store, doc_id } => {
             let store = get_store_from_opts(store)?;
             store.init().await?;
@@ -1205,124 +1041,32 @@ async fn main() -> Result<()> {
         ServSubcommand::Version => {
             println!("{}", VERSION);
         }
-        ServSubcommand::Config { cmd } => {
-            match cmd {
-                ConfigSubcommand::Validate { config } => {
-                    println!("Validating configuration file: {}", config.display());
-
-                    match Config::load(Some(config.as_path())) {
-                        Ok(config) => {
-                            println!("✅ Configuration is valid!");
-                            println!();
-                            println!("Configuration summary:");
-                            println!("  Server: {}:{}", config.server.host, config.server.port);
-                            if let Some(ref metrics_config) = config.metrics {
-                                println!(
-                                    "  Metrics: {}:{}",
-                                    config.server.host, metrics_config.port
-                                );
-                            } else {
-                                println!("  Metrics: disabled");
-                            }
-                            println!(
-                                "  Auth: {}",
-                                if config.auth.is_empty() {
-                                    "disabled"
-                                } else {
-                                    "enabled"
-                                }
-                            );
-                            println!(
-                                "  Store: {}",
-                                match &config.store {
-                                    y_sweet_core::config::StoreConfig::Memory =>
-                                        "Memory".to_string(),
-                                    y_sweet_core::config::StoreConfig::Filesystem(fs) =>
-                                        format!("Filesystem ({})", fs.path),
-                                    y_sweet_core::config::StoreConfig::S3(s3) =>
-                                        format!("S3 ({})", s3.bucket),
-                                    y_sweet_core::config::StoreConfig::Aws(aws) =>
-                                        format!("AWS S3 ({})", aws.bucket),
-                                    y_sweet_core::config::StoreConfig::Cloudflare(cf) =>
-                                        format!("Cloudflare R2 ({})", cf.bucket),
-                                    y_sweet_core::config::StoreConfig::Backblaze(b2) =>
-                                        format!("Backblaze B2 ({})", b2.bucket),
-                                    y_sweet_core::config::StoreConfig::Minio(minio) =>
-                                        format!("MinIO ({} at {})", minio.bucket, minio.endpoint),
-                                    y_sweet_core::config::StoreConfig::Tigris(tigris) =>
-                                        format!("Tigris ({})", tigris.bucket),
-                                }
-                            );
-                            println!("  Webhooks: {}", config.webhooks.len());
-                            println!(
-                                "  Logging: {} ({})",
-                                config.logging.level, config.logging.format
-                            );
-
-                            if let Some(url) = &config.server.url {
-                                println!("  URL prefix: {}", url);
-                            }
-
-                            if !config.server.allowed_hosts.is_empty() {
-                                println!("  Allowed hosts: {}", config.server.allowed_hosts.len());
-                                for host in &config.server.allowed_hosts {
-                                    println!("    - {}://{}", host.scheme, host.host);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Configuration validation failed:");
-                            eprintln!("   {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                ConfigSubcommand::Show { config } => {
-                    match Config::load(Some(config.as_path())) {
-                        Ok(config) => {
-                            // Print environment variables to stderr first
-                            config.print_env();
-
-                            println!("Current configuration:");
-                            println!();
-
-                            // Convert to regular TOML for display
-                            match toml::to_string_pretty(&config) {
-                                Ok(toml_str) => println!("{}", toml_str),
-                                Err(e) => {
-                                    eprintln!("❌ Failed to serialize configuration: {}", e);
-                                    std::process::exit(1);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Failed to load configuration:");
-                            eprintln!("   {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
+        ServSubcommand::Config { cmd } => match cmd {
+            ConfigSubcommand::Validate { config: path } => {
+                let config = Config::load(Some(path))?;
+                let control = load_control_config(path, &config)?;
+                println!("Configuration is valid: {}", path.display());
+                println!("  Server: {}:{}", config.server.host, config.server.port);
+                println!("  Public URL: {}", config.server.url.as_deref().unwrap());
+                println!("  Metadata: {}", control.database.display());
+                println!("  Owner keys: {}", control.owners.len());
+                println!("  Authentication: Ed25519 challenge-response");
             }
-        }
+            ConfigSubcommand::Show { config: path } => {
+                let config = Config::load(Some(path))?;
+                let control = load_control_config(path, &config)?;
+                let mut resolved = toml::Value::try_from(&config)?;
+                let table = resolved.as_table_mut().context("config must be a table")?;
+                table.remove("auth");
+                table.remove("webhooks");
+                table.insert("control".into(), toml::Value::try_from(&control)?);
+                println!("{}", toml::to_string_pretty(&resolved)?);
+            }
+        },
         ServSubcommand::Migrate { config, store } => {
             let store = build_store_for_subcommand(store.as_deref(), config.as_ref())?;
             relay::migrations::run_pending(store).await?;
         }
-        ServSubcommand::Sign { auth } => {
-            let authenticator = Authenticator::new(auth)?;
-            sign_stdin(&authenticator).await?;
-        }
-        ServSubcommand::Verify {
-            auth,
-            doc_id,
-            file_hash,
-        } => {
-            let authenticator = Authenticator::new(auth)?;
-            // Use the doc_id if provided, otherwise use file_hash if provided
-            let id = doc_id.as_deref().or(file_hash.as_deref());
-            verify_stdin(&authenticator, id).await?;
-        }
-
         ServSubcommand::Subdocs { cmd } => match cmd {
             SubdocsCommand::Index {
                 config,

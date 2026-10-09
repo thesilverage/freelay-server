@@ -1,9 +1,8 @@
 openapi: 3.1.0
 info:
-  title: Relay Server API
+  title: Upstream legacy data-plane API
   version: '0.5.0'
-  x-logo:
-    url: 'https://f.system3.md/relay-text.svg'
+  description: Legacy compatibility reference. Freelay's integrated control plane is described in openapi-freelay.json; generic document and physical-delete routes here are disabled in integrated mode.
 paths:
   /doc/new:
     post:

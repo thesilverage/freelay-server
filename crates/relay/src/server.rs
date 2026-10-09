@@ -14,7 +14,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, head, post},
+    routing::{get, head, post},
     Json, Router,
 };
 use axum_extra::typed_header::TypedHeader;
@@ -49,6 +49,25 @@ use y_sweet_core::{
 };
 
 const RELAY_SERVER_VERSION: &str = env!("GIT_VERSION");
+
+async fn freelay_resource_type(State(server): State<Arc<Server>>, req: Request, next: Next) -> Response {
+    let parts: Vec<&str> = req.uri().path().split('/').collect();
+    if parts.len() < 3 || (parts[1] != "d" && parts[1] != "f") {
+        return next.run(req).await;
+    }
+    let header = req.headers().get("authorization").and_then(|h|h.to_str().ok())
+        .and_then(|h|h.strip_prefix("Bearer ")).map(str::to_owned);
+    let token = header.or_else(|| url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+        .find(|(key,_)|key == "token").map(|(_,value)|value.into_owned()));
+    let permission = token.as_deref().and_then(|t|server.authenticator.as_ref()?.verify_token_auto(t,current_time_epoch_millis()).ok());
+    let allowed = match permission {
+        Some(Permission::Doc(p)) => parts[1] == "d" && p.doc_id == parts[2],
+        Some(Permission::File(p)) => parts[1] == "f" && p.doc_id == parts[2],
+        _ => false,
+    };
+    if !allowed { return (StatusCode::UNAUTHORIZED,Json(json!({"code":"invalid_resource_token"}))).into_response(); }
+    next.run(req).await
+}
 
 /// How often the server pings each WebSocket connection.
 const PING_EVERY: Duration = Duration::from_secs(20);
@@ -234,7 +253,8 @@ pub struct Server {
     /// Child of cancellation_token that doc socket loops watch. Firing it
     /// alone closes every doc WebSocket without stopping anything else, so
     /// shutdown can clear the sockets before axum's graceful drain starts.
-    doc_close_token: CancellationToken,
+    doc_close_token: std::sync::Mutex<CancellationToken>,
+    read_only: Option<Arc<std::sync::atomic::AtomicBool>>,
     event_dispatcher: Option<Arc<dyn EventDispatcher>>,
     sync_protocol_event_sender: Arc<SyncProtocolEventSender>,
     metrics: Arc<RelayMetrics>,
@@ -301,7 +321,8 @@ impl Server {
             authenticator,
             url,
             allowed_hosts,
-            doc_close_token: cancellation_token.child_token(),
+            doc_close_token: std::sync::Mutex::new(cancellation_token.child_token()),
+            read_only: None,
             cancellation_token,
             event_dispatcher,
             sync_protocol_event_sender,
@@ -316,7 +337,20 @@ impl Server {
     /// close token is its child); calling this first merely orders the
     /// socket close ahead of the drain.
     pub fn close_doc_sockets(&self) {
-        self.doc_close_token.cancel();
+        self.doc_close_token.lock().expect("socket close lock poisoned").cancel();
+    }
+
+    pub fn set_read_only_signal(&mut self, signal: Arc<std::sync::atomic::AtomicBool>) {
+        self.read_only = Some(signal);
+    }
+
+    /// End the current connection generation while allowing new read-only
+    /// connections. Unlike shutdown, this does not permanently cancel sockets.
+    pub fn interrupt_doc_sockets(&self) {
+        let mut current = self.doc_close_token.lock().expect("socket close lock poisoned");
+        if current.is_cancelled() {return;}
+        current.cancel();
+        *current = self.cancellation_token.child_token();
     }
 
     /// First beat of the client-compatible shutdown drain: persist every
@@ -637,31 +671,17 @@ impl Server {
         resp
     }
 
-    pub fn routes_with_metrics(self: &Arc<Self>) -> Router {
-        self.routes().layer(middleware::from_fn_with_state(
-            self.clone(),
-            auth_metrics_middleware,
-        ))
-    }
-
+    /// Freelay exposes only exact-resource operations. In particular,
+    /// full attachment grants must never authorize physical deletion.
     pub fn routes(self: &Arc<Self>) -> Router {
         let mut router = Router::new()
             .route("/ready", get(ready))
-            .route("/check_store", post(check_store))
-            .route("/check_store", get(check_store_deprecated))
-            .route("/doc/ws/:doc_id", get(handle_socket_upgrade_deprecated))
-            .route("/doc/new", post(new_doc))
-            .route("/doc/:doc_id/auth", post(auth_doc))
-            .route("/doc/:doc_id/as-update", get(get_doc_as_update_deprecated))
-            .route("/doc/:doc_id/update", post(update_doc_deprecated))
             .route("/d/:doc_id/as-update", get(get_doc_as_update))
-            .route("/d/:doc_id/update", post(update_doc))
             .route("/d/:doc_id/versions", get(handle_doc_versions))
             .route(
                 "/d/:doc_id/ws/:doc_id2",
                 get(handle_socket_upgrade_full_path),
-            )
-            .route("/webhook/reload", post(reload_webhook_config_endpoint));
+            );
 
         // Only add file endpoints if a store is configured
         if let Some(store) = &self.store {
@@ -673,8 +693,6 @@ impl Server {
             // Add file operations that work with any store
             router = router
                 .route("/f/:doc_id/history", get(handle_file_history))
-                .route("/f/:doc_id", delete(handle_file_delete))
-                .route("/f/:doc_id/:hash", delete(handle_file_delete_by_hash))
                 .route("/f/:doc_id", head(handle_file_head));
 
             // Only add direct upload/download endpoints if store supports direct uploads
@@ -690,7 +708,14 @@ impl Server {
             }
         }
 
-        router.with_state(self.clone())
+        router
+            .with_state(self.clone())
+            .layer(middleware::from_fn_with_state(
+                self.clone(), freelay_resource_type,
+            ))
+            .layer(middleware::from_fn_with_state(
+                self.clone(), auth_metrics_middleware,
+            ))
     }
 
     pub fn metrics_routes(self: &Arc<Self>) -> Router {
@@ -739,7 +764,7 @@ impl Server {
 
     pub async fn serve(self, listener: TcpListener, redact_errors: bool) -> Result<()> {
         let s = Arc::new(self);
-        let routes = s.routes_with_metrics();
+        let routes = s.routes();
         s.serve_internal(listener, redact_errors, routes).await
     }
 
@@ -892,6 +917,12 @@ async fn handle_socket_upgrade_with_channel_and_user(
     token: Option<String>,
     State(server_state): State<Arc<Server>>,
 ) -> Result<Response, AppError> {
+    // Capture before checking the guard: a transition during async document
+    // loading must cancel this connection too, not give it the next generation.
+    let cancellation_token = server_state.doc_close_token.lock().expect("socket close lock poisoned").clone();
+    if authorization == Authorization::Full && server_state.read_only.as_ref().is_some_and(|s|s.load(std::sync::atomic::Ordering::Acquire)) {
+        return Err(AppError::new(StatusCode::SERVICE_UNAVAILABLE,anyhow!("Server is read-only")));
+    }
     server_state
         .ensure_socket_doc_access(&doc_id, authorization)
         .await?;
@@ -918,7 +949,6 @@ async fn handle_socket_upgrade_with_channel_and_user(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     // Socket loops watch the doc-close token (a child of the server token)
     // so shutdown can close them ahead of the graceful drain.
-    let cancellation_token = server_state.doc_close_token.clone();
     let sync_protocol_event_sender = server_state.sync_protocol_event_sender.clone();
     let metrics = server_state.metrics.clone();
     let doc_id_clone = doc_id.clone();
@@ -1874,7 +1904,7 @@ async fn handle_file_download_url(
                     .await?;
                     // Add token to the URL
                     let mut download_url = download_response.download_url;
-                    if !download_url.starts_with("http") || download_url.contains("/f/") {
+                    if server_state.store.as_ref().is_some_and(|store| store.supports_direct_uploads()) {
                         // This is our local endpoint, add token
                         let separator = if download_url.contains('?') { "&" } else { "?" };
                         download_url = format!("{}{}token={}", download_url, separator, token);
@@ -1902,7 +1932,7 @@ async fn handle_file_download_url(
                         .await?;
                         // Add token to the URL
                         let mut download_url = download_response.download_url;
-                        if !download_url.starts_with("http") || download_url.contains("/f/") {
+                        if server_state.store.as_ref().is_some_and(|store| store.supports_direct_uploads()) {
                             // This is our local endpoint, add token
                             let separator = if download_url.contains('?') { "&" } else { "?" };
                             download_url = format!("{}{}token={}", download_url, separator, token);
@@ -1963,7 +1993,7 @@ async fn handle_file_download_url(
                         .await?;
                         // Add token to the URL
                         let mut download_url = download_response.download_url;
-                        if !download_url.starts_with("http") || download_url.contains("/f/") {
+                        if server_state.store.as_ref().is_some_and(|store| store.supports_direct_uploads()) {
                             // This is our local endpoint, add token
                             let separator = if download_url.contains('?') { "&" } else { "?" };
                             download_url = format!("{}{}token={}", download_url, separator, token);
@@ -3628,7 +3658,7 @@ mod test {
                 "the flush must not evict"
             );
             assert!(
-                !server.doc_close_token.is_cancelled(),
+                !server.doc_close_token.lock().unwrap().is_cancelled(),
                 "the flush must not close sockets"
             );
         }
@@ -4244,15 +4274,26 @@ mod test {
             async fn spawn(doc_id: &str) -> Self {
                 let store = GatedStore::new();
                 let shutdown = CancellationToken::new();
-                let server = Arc::new(
-                    test_server(
-                        Some(Box::new(store.clone())),
-                        Duration::from_secs(600),
-                        false,
-                        shutdown.clone(),
-                    )
-                    .await,
-                );
+                let mut server = test_server(
+                    Some(Box::new(store.clone())),
+                    Duration::from_secs(600),
+                    false,
+                    shutdown.clone(),
+                )
+                .await;
+                let mut authenticator = Authenticator::gen_key().unwrap();
+                authenticator.set_expected_audience(Some("https://example.test/".into()));
+                let doc_token = authenticator.gen_doc_token_cwt(
+                    doc_id,
+                    Authorization::Full,
+                    y_sweet_core::auth::ExpirationTimeEpochMillis(
+                        current_time_epoch_millis() + 3_600_000,
+                    ),
+                    None,
+                    None,
+                ).unwrap();
+                server.authenticator = Some(authenticator);
+                let server = Arc::new(server);
 
                 // Load the empty document before the socket opens so the test
                 // controls precisely when the first client state arrives.
@@ -4260,7 +4301,7 @@ mod test {
 
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let address = listener.local_addr().unwrap();
-                let app = server.routes_with_metrics();
+                let app = server.routes();
                 let server_shutdown = shutdown.clone();
                 let task = tokio::spawn(async move {
                     axum::serve(listener, app.into_make_service())
@@ -4273,7 +4314,7 @@ mod test {
                     server,
                     store,
                     doc_id: doc_id.to_string(),
-                    websocket_url: format!("ws://{address}/d/{doc_id}/ws/{doc_id}"),
+                    websocket_url: format!("ws://{address}/d/{doc_id}/ws/{doc_id}?token={doc_token}"),
                     shutdown,
                     task,
                 }

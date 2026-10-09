@@ -1,0 +1,1667 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Freelay control API",
+    "version": "1",
+    "description": "Ed25519 challenge-response and relay-scoped metadata. See docs/PROTOCOL.md for exact signed bytes and authorization rules. Data-plane routes are upstream-derived; legacy /doc/* and physical-delete routes are not exposed in integrated mode."
+  },
+  "servers": [
+    {
+      "url": "https://freelay.example/",
+      "description": "Replace with the exact canonical deployment base URL, including any prefix."
+    }
+  ],
+  "security": [
+    {
+      "session": []
+    }
+  ],
+  "paths": {
+    "/api/v1/auth/challenges": {
+      "post": {
+        "operationId": "challenge",
+        "summary": "Create a single-use 60-second Ed25519 challenge.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Challenge"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChallengeRequest"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/auth/sessions": {
+      "post": {
+        "operationId": "authenticate",
+        "summary": "Verify proof; optionally replace the Authorization session.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proof"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/auth/session": {
+      "delete": {
+        "operationId": "logout",
+        "summary": "Invalidate this session.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "me",
+        "summary": "Inspect this principal, including unregistered identities.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "profile",
+        "summary": "Change the registered principal's display name.",
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/state": {
+      "get": {
+        "operationId": "state",
+        "summary": "Caller-visible metadata snapshot, including ETag.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/State"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged caller-visible state."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/relays": {
+      "post": {
+        "operationId": "createRelay",
+        "summary": "Configured Owner creates a relay.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelayCreated"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "renameRelay",
+        "summary": "Relay Owner renames this relay.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Quoted containing-relay revision. 428 when missing; 412 when stale."
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteRelay",
+        "summary": "Irreversibly tombstone relay and its folders.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/folders": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "createFolder",
+        "summary": "Relay Owner registers a new shared-folder root.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderCreated"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/folders/{folder}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "updateFolder",
+        "summary": "Relay Owner changes name/privacy.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderUpdate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Quoted containing-relay revision. 428 when missing; 412 when stale."
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteFolder",
+        "summary": "Irreversibly tombstone a shared folder.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Deleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/owners/{principal}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "principal",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setOwner",
+        "summary": "Add configured co-owner. Cannot grant global authority.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeOwner",
+        "summary": "Remove co-owner; last effective Owner is protected.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/members/{principal}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "principal",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setMember",
+        "summary": "Set membership access. Owner-only.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Grant"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Quoted containing-relay revision. 428 when missing; 412 when stale."
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "removeMember",
+        "summary": "Remove membership; self-withdrawal is allowed.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/folders/{folder}/members/{principal}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "folder",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "principal",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "setFolderMember",
+        "summary": "Set membership access. Owner-only.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Grant"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Quoted containing-relay revision. 428 when missing; 412 when stale."
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "removeFolderMember",
+        "summary": "Remove membership; self-withdrawal is allowed.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/invitations": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "invite",
+        "summary": "Owner creates a finite invitation; code returned once.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invitation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/relays/{relay}/invitations/{invitation}": {
+      "parameters": [
+        {
+          "name": "relay",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        {
+          "name": "invitation",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        }
+      ],
+      "delete": {
+        "operationId": "revokeInvitation",
+        "summary": "Owner disables future acceptance.",
+        "responses": {
+          "204": {
+            "description": "Success; refresh state snapshot."
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/invitations/accept": {
+      "post": {
+        "operationId": "acceptInvitation",
+        "summary": "Accept invitation with deduplicated use accounting.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Acceptance"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/token": {
+      "post": {
+        "operationId": "documentToken",
+        "summary": "Authorize/register exact document resource and mint a scoped grant.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/file-token": {
+      "post": {
+        "operationId": "fileToken",
+        "summary": "Authorize/register exact file resource and bind transfer metadata.",
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. JSON errors have a stable code; malformed requests may use the framework's validation response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque 15-minute session, not a scoped data capability."
+      }
+    },
+    "schemas": {
+      "Name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "At most 200 UTF-8 bytes."
+      },
+      "PublicKey": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{43}$",
+        "description": "Canonical base64url Ed25519 public key."
+      },
+      "Access": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ]
+      },
+      "ChallengeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKey"
+          }
+        },
+        "required": [
+          "version",
+          "publicKey"
+        ]
+      },
+      "Challenge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "id": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "string"
+          },
+          "audience": {
+            "type": "string",
+            "format": "uri"
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKey"
+          },
+          "issuedAt": {
+            "type": "integer"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "id",
+          "nonce",
+          "audience",
+          "publicKey",
+          "issuedAt",
+          "expiresAt"
+        ]
+      },
+      "Proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKey"
+          },
+          "signature": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "publicKey",
+          "signature"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "token",
+          "principal",
+          "expiresAt"
+        ]
+      },
+      "NameRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "FolderRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "private": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "FolderUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "private": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "private"
+        ]
+      },
+      "Grant": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          }
+        },
+        "required": [
+          "access"
+        ]
+      },
+      "InvitationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "maxUses": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295,
+            "default": 1
+          },
+          "ttlSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 86400
+          }
+        },
+        "required": [
+          "access"
+        ]
+      },
+      "Invitation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code"
+        ]
+      },
+      "Acceptance": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ]
+      },
+      "Accepted": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "relay"
+        ]
+      },
+      "DocumentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "folder": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "docId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "device": {
+            "type": "string"
+          },
+          "supersede": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "relay",
+          "folder",
+          "docId"
+        ]
+      },
+      "FileRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "folder": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "docId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "hash": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "contentType": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "contentLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 262144000
+          },
+          "device": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "relay",
+          "folder",
+          "docId",
+          "hash",
+          "contentType",
+          "contentLength"
+        ]
+      },
+      "Id": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "Deleted": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "deleted": {
+            "const": true
+          },
+          "gcNotBefore": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "deleted",
+          "gcNotBefore"
+        ]
+      },
+      "Token": {
+        "type": "object",
+        "required": [
+          "token",
+          "url",
+          "expiryTime"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expiryTime": {
+            "type": "integer",
+            "description": "Unix milliseconds."
+          },
+          "authorization": {
+            "type": "string"
+          },
+          "docId": {
+            "type": "string"
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKey"
+          },
+          "registered": {
+            "type": "boolean"
+          },
+          "ownerEligible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "publicKey",
+          "registered",
+          "ownerEligible"
+        ]
+      },
+      "State": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relays": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelayRecord"
+            }
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderRecord"
+            }
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            }
+          },
+          "folderMemberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderMembership"
+            }
+          },
+          "invitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvitationRecord"
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VisibleProfile"
+            }
+          }
+        },
+        "required": [
+          "relays",
+          "folders",
+          "memberships",
+          "folderMemberships",
+          "invitations",
+          "profiles"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "RelayCreated": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "FolderCreated": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "private": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "relay",
+          "name",
+          "private"
+        ]
+      },
+      "RelayRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "suspended"
+            ]
+          },
+          "owner": {
+            "type": "boolean"
+          },
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              null
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "state",
+          "owner",
+          "access"
+        ]
+      },
+      "FolderRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "private": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "creator": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "relay",
+          "name",
+          "private",
+          "revision",
+          "access",
+          "creator"
+        ]
+      },
+      "Membership": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "principal": {
+            "type": "string"
+          },
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "relay",
+          "principal",
+          "access"
+        ]
+      },
+      "FolderMembership": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "folder": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "principal": {
+            "type": "string"
+          },
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          }
+        },
+        "required": [
+          "relay",
+          "folder",
+          "principal",
+          "access"
+        ]
+      },
+      "InvitationRecord": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "relay": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$"
+          },
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "expiresAt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxUses": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "uses": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "relay",
+          "folder",
+          "access",
+          "expiresAt",
+          "maxUses",
+          "uses",
+          "enabled"
+        ]
+      },
+      "VisibleProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "ownerEligible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "ownerEligible"
+        ]
+      }
+    }
+  }
+}

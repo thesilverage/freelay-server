@@ -1,36 +1,30 @@
-# relay.toml - Relay Server Configuration File
-
+# Freelay configuration. Also see ../docs/OPERATIONS.md.
+# Create the parent directory for database before starting. Paths are relative
+# to the process working directory, not to this configuration file.
 [server]
-url = "https://api.example.com"  # RELAY_SERVER_URL
+url = "http://127.0.0.1:8080/"
+host = "127.0.0.1"
+port = 8080
+checkpoint_freq_seconds = 10
 
-host = "0.0.0.0"                 # RELAY_SERVER_HOST
-port = 8080                      # PORT
-
-[metrics]
-port = 9090                      # METRICS_PORT
-
-[logging]
-level = "info"                   # RUST_LOG
-format = "pretty"                # RELAY_SERVER_LOG_FORMAT: "json" or "pretty"
-
-
-# Relay.md public keys
-[[auth]]
-key_id = "relay_2025_10_22"
-public_key = "/6OgBTHaRdWLogewMdyE+7AxnI0/HP3WGqRs/bYBlFg="
-
-[[auth]]
-key_id = "relay_2025_10_23"
-public_key = "fbm9JLHrwPpST5HAYORTQR/i1VbZ1kdp2ZEy0XpMbf0="
-
-
-# Storage backend configuration
-# NOTE: S3-compatible storage is required for attachment storage, and highly
-#       recommended for production use-cases.
 [store]
-type = "filesystem"               # RELAY_SERVER_STORAGE (as s3://bucket/prefix)
-path = "./data"
+type = "filesystem"
+path = "./data/objects"
 
+[control]
+database = "./data/control.sqlite"
+# Copy public keys from the plugin's "Show public key" button.
+# No client private key and no persistent token-signing key belong here.
+owners = []
+token_ttl_seconds = 900
+minimum_free_bytes = 1073741824
+max_attachment_bytes = 262144000
+read_only = false
+# Desktop native requests do not require CORS. Add only the exact origin(s)
+# needed by your mobile Obsidian runtime; neither "*" nor "null" is accepted.
+allowed_origins = []
+
+# Alternative persistent stores: replace the [store] section above.
 # ==== AWS S3 ====
 # [store]
 # type = "aws"
@@ -77,27 +71,11 @@ path = "./data"
 # ==== Generic S3 Configuration ====
 # [store]
 # type = "s3"
-# bucket = "relay-docs"
+# bucket = "freelay-docs"
 # region = "us-east-1"
 # endpoint = ""                 # AWS_ENDPOINT_URL_S3 (for S3-compatible services)
 # path_style = false            # AWS_S3_USE_PATH_STYLE
-# presigned_url_expiration = 3600  # RELAY_SERVER_S3_PRESIGNED_URL_EXPIRATION
+# presigned_url_expiration = 900 # Applies to all S3-compatible store types.
 # prefix = ""
 # access_key_id = "AKIA..."
 # secret_access_key = "secret..."
-
-# ==== In-Memory Storage ====
-# NOTE: This does not support attachments
-# [store]
-# type = "memory"
-
-
-# [[webhooks]]
-# # Webhook configuration (can have multiple)
-# # Can be overridden by RELAY_SERVER_WEBHOOK_CONFIG (as JSON array)
-# url = "https://webhook.example.com/relay"
-# auth_token = "Bearer webhook_secret_123"
-# prefix = "{relay-guid}"           # Optional: only send events for docs with this prefix
-# timeout_ms = 5000             # Optional: request timeout
-
-

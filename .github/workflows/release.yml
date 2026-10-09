@@ -35,13 +35,13 @@ jobs:
         args: --manifest-path=crates/Cargo.toml --target aarch64-apple-darwin --release
 
     - name: strip binary
-      run: strip ./crates/target/aarch64-apple-darwin/release/relay
+      run: strip ./crates/target/aarch64-apple-darwin/release/freelay
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: macos-binary-arm64
-        path: ./crates/target/aarch64-apple-darwin/release/relay
+        path: ./crates/target/aarch64-apple-darwin/release/freelay
 
   build-macos-x64:
     runs-on: macos-latest
@@ -67,7 +67,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: macos-binary-x64
-        path: ./crates/target/x86_64-apple-darwin/release/relay 
+        path: ./crates/target/x86_64-apple-darwin/release/freelay
 
   build-linux:
     runs-on: ubuntu-latest
@@ -95,7 +95,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: linux-binary
-        path: ./crates/target/x86_64-unknown-linux-musl/release/relay 
+        path: ./crates/target/x86_64-unknown-linux-musl/release/freelay
 
   build-linux-arm64:
     runs-on: ubuntu-latest
@@ -128,7 +128,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: linux-binary-arm64
-        path: ./crates/target/aarch64-unknown-linux-musl/release/relay 
+        path: ./crates/target/aarch64-unknown-linux-musl/release/freelay
 
   build-linux-armv7:
     runs-on: ubuntu-latest
@@ -161,7 +161,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: linux-binary-armv7
-        path: ./crates/target/armv7-unknown-linux-musleabihf/release/relay
+        path: ./crates/target/armv7-unknown-linux-musleabihf/release/freelay
 
   build-windows:
     runs-on: ubuntu-latest
@@ -192,7 +192,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: windows-binary
-        path: ./crates/target/x86_64-pc-windows-gnu/release/relay.exe
+        path: ./crates/target/x86_64-pc-windows-gnu/release/freelay.exe
 
   release:
     needs: [build-linux, build-macos-arm64, build-macos-x64, build-windows, build-linux-arm64, build-linux-armv7]
@@ -204,31 +204,31 @@ jobs:
     - name: Compress binary
       run: >
         gzip -9 --keep --force 
-        windows-binary/relay.exe
-        linux-binary/relay
-        macos-binary-x64/relay
-        macos-binary-arm64/relay
-        linux-binary-arm64/relay
-        linux-binary-armv7/relay
+        windows-binary/freelay.exe
+        linux-binary/freelay
+        macos-binary-x64/freelay
+        macos-binary-arm64/freelay
+        linux-binary-arm64/freelay
+        linux-binary-armv7/freelay
     - name: ls
       run: ls -la
     - name: rename and move
       run: >
-        mv windows-binary/relay.exe.gz relay-win-x64.exe.gz &&
-        mv linux-binary/relay.gz relay-linux-x64.gz &&
-        mv macos-binary-x64/relay.gz relay-macos-x64.gz &&
-        mv macos-binary-arm64/relay.gz relay-macos-arm64.gz &&
-        mv linux-binary-arm64/relay.gz relay-linux-arm64.gz &&
-        mv linux-binary-armv7/relay.gz relay-linux-armv7.gz
+        mv windows-binary/freelay.exe.gz freelay-win-x64.exe.gz &&
+        mv linux-binary/freelay.gz freelay-linux-x64.gz &&
+        mv macos-binary-x64/freelay.gz freelay-macos-x64.gz &&
+        mv macos-binary-arm64/freelay.gz freelay-macos-arm64.gz &&
+        mv linux-binary-arm64/freelay.gz freelay-linux-arm64.gz &&
+        mv linux-binary-armv7/freelay.gz freelay-linux-armv7.gz
     - name: Release
       uses: softprops/action-gh-release@v1
       with:
         name: ${{ github.event.inputs.version }}
         draft: true
         files: |
-            relay-win-x64.exe.gz
-            relay-linux-x64.gz
-            relay-macos-x64.gz
-            relay-macos-arm64.gz
-            relay-linux-arm64.gz
-            relay-linux-armv7.gz
+            freelay-win-x64.exe.gz
+            freelay-linux-x64.gz
+            freelay-macos-x64.gz
+            freelay-macos-arm64.gz
+            freelay-linux-arm64.gz
+            freelay-linux-armv7.gz

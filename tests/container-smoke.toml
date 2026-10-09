@@ -1,0 +1,12 @@
+# Test-only, isolated by --network none and disposable tmpfs mounts.
+[server]
+url = "http://127.0.0.1:8080/base/"
+host = "127.0.0.1"
+port = 8080
+[store]
+type = "filesystem"
+path = "/data/objects"
+[control]
+database = "/data/control.sqlite"
+owners = []
+minimum_free_bytes = 0

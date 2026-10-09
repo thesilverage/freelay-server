@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod convert;
+pub mod control;
 pub mod doc_inspect;
 pub mod doc_lifecycle;
 pub mod doc_restore;

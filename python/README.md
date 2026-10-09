@@ -1,6 +1,10 @@
-# Relay Python SDK
+# Legacy upstream Python SDK
 
-Python client library for interacting with the Relay server.
+Retained from [Relay server](https://github.com/No-Instructions/relay-server)
+for upstream compatibility. This SDK uses legacy document-creation/authentication
+routes that are disabled in integrated Freelay mode. It is not a Freelay control
+client and is not part of the supported deployment. See
+[the Freelay protocol](../docs/PROTOCOL.md) for the current API.
 
 ## Usage
 

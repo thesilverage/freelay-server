@@ -2,13 +2,12 @@ use std::{env, process::Command};
 
 fn main() {
     let version = env_version()
-        .or_else(|| git_output(&["describe", "--tags", "--exact-match"]))
         .or_else(env_sha)
         .or_else(|| git_output(&["rev-parse", "--short=12", "HEAD"]))
-        .unwrap_or_else(|| "unknown".to_string());
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
     println!("cargo:rustc-env=GIT_VERSION={}", version);
-    println!("cargo:rerun-if-env-changed=RELAY_VERSION");
+    println!("cargo:rerun-if-env-changed=FREELAY_VERSION");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_TYPE");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
@@ -18,7 +17,7 @@ fn main() {
 }
 
 fn env_version() -> Option<String> {
-    env_value("RELAY_VERSION").or_else(|| {
+    env_value("FREELAY_VERSION").or_else(|| {
         if env::var("GITHUB_REF_TYPE").as_deref() == Ok("tag") {
             env_value("GITHUB_REF_NAME")
         } else {

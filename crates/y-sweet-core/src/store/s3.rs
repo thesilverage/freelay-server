@@ -53,8 +53,8 @@ impl S3Config {
     ///
     /// This is the unified configuration parser used by both y-sweet and y-sign
     pub fn from_env(bucket: Option<String>, prefix: Option<String>) -> anyhow::Result<Self> {
-        // First check for RELAY_SERVER_STORAGE which has highest precedence
-        if let Ok(store_path) = env::var("RELAY_SERVER_STORAGE") {
+        // First check for FREELAY_SERVER_STORAGE which has highest precedence
+        if let Ok(store_path) = env::var("FREELAY_SERVER_STORAGE") {
             if store_path.starts_with("s3://") {
                 // Parse the S3 URL to extract bucket and prefix
                 let url = UrlParser::parse(&store_path)?;
@@ -77,7 +77,7 @@ impl S3Config {
 
         // Otherwise, look for STORAGE_BUCKET or AWS_S3_BUCKET
         let bucket = env::var("STORAGE_BUCKET").or_else(|_| env::var("AWS_S3_BUCKET"))
-            .map_err(|_| anyhow::anyhow!("Either RELAY_SERVER_STORAGE (s3:// URL) or STORAGE_BUCKET/AWS_S3_BUCKET environment variable is required"))?;
+            .map_err(|_| anyhow::anyhow!("Either FREELAY_SERVER_STORAGE (s3:// URL) or STORAGE_BUCKET/AWS_S3_BUCKET environment variable is required"))?;
 
         // Use STORAGE_PREFIX for consistency with both tools
         let bucket_prefix = env::var("STORAGE_PREFIX")
@@ -192,6 +192,7 @@ pub struct S3Store {
     pub credentials: RotatingCredentials,
     prefix: Option<String>,
     probe_prefix: Option<String>,
+    presigned_url_duration: Duration,
 }
 
 #[derive(Debug)]
@@ -229,6 +230,7 @@ impl S3Store {
             credentials,
             prefix: config.bucket_prefix,
             probe_prefix: config.probe_prefix,
+            presigned_url_duration: PRESIGNED_URL_DURATION,
         }
     }
 
@@ -236,6 +238,11 @@ impl S3Store {
     /// rotate the credentials this store signs with. Cheap; shares state.
     pub fn rotating_credentials(&self) -> RotatingCredentials {
         self.credentials.clone()
+    }
+
+    pub fn with_presigned_url_expiration(mut self, seconds: u64) -> Self {
+        self.presigned_url_duration = Duration::from_secs(seconds);
+        self
     }
 
     /// Prefix used for the max-keys=0 bucket probe: the storage prefix wins
@@ -281,7 +288,7 @@ impl S3Store {
 
         let creds = self.credentials.get();
         let action = self.bucket.get_object(Some(&*creds), &prefixed_key);
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
 
         // The signed URL carries X-Amz-Credential, X-Amz-Signature and,
         // on rotating STS credentials, X-Amz-Security-Token. Logging it
@@ -308,7 +315,7 @@ impl S3Store {
         body: Option<Vec<u8>>,
         headers: &[(&str, &str)],
     ) -> Result<Response> {
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
         let method_label = method.as_str().to_string();
         let mut request = self.client.request(method, url);
 
@@ -912,7 +919,7 @@ impl Store for S3Store {
         let creds = self.credentials.get();
         let mut action = self.bucket.list_object_versions(Some(&*creds));
         action.with_prefix(&prefixed_key);
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
 
         let response = self
             .client
@@ -1059,7 +1066,7 @@ impl Store for S3Store {
         }
 
         // Sign the URL with time
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
         // The signed URL carries X-Amz-Credential, X-Amz-Signature and,
         // on rotating STS credentials, X-Amz-Security-Token. Logging it
         // hands a working credential to anyone holding the log, so only
@@ -1090,7 +1097,7 @@ impl Store for S3Store {
 
         let creds = self.credentials.get();
         let action = self.bucket.get_object(Some(&*creds), &prefixed_key);
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
 
         // The signed URL carries X-Amz-Credential, X-Amz-Signature and,
         // on rotating STS credentials, X-Amz-Security-Token. Logging it
@@ -1360,7 +1367,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Everything `from_env` / `build_config` reads, so each case starts clean.
         const MANAGED: &[&str] = &[
-            "RELAY_SERVER_STORAGE",
+            "FREELAY_SERVER_STORAGE",
             "STORAGE_BUCKET",
             "AWS_S3_BUCKET",
             "STORAGE_PREFIX",
@@ -1612,7 +1619,7 @@ impl Store for S3Store {
         }
 
         // Sign the URL with time
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
         // The signed URL carries X-Amz-Credential, X-Amz-Signature and,
         // on rotating STS credentials, X-Amz-Security-Token. Logging it
         // hands a working credential to anyone holding the log, so only
@@ -1643,7 +1650,7 @@ impl Store for S3Store {
 
         let creds = self.credentials.get();
         let action = self.bucket.get_object(Some(&*creds), &prefixed_key);
-        let url = action.sign_with_time(PRESIGNED_URL_DURATION, &Timestamp::now());
+        let url = action.sign_with_time(self.presigned_url_duration, &Timestamp::now());
 
         // The signed URL carries X-Amz-Credential, X-Amz-Signature and,
         // on rotating STS credentials, X-Amz-Security-Token. Logging it

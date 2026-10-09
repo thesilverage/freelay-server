@@ -16,7 +16,7 @@ struct EnvOverride {
 // Centralized override table - single source of truth
 static ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride {
-        env_var: "RELAY_SERVER_HOST",
+        env_var: "FREELAY_SERVER_HOST",
         config_path: "server.host",
         apply: |config, value| {
             config.server.host = value.to_string();
@@ -49,7 +49,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_URL",
+        env_var: "FREELAY_SERVER_URL",
         config_path: "server.url",
         apply: |config, value| {
             config.server.url = Some(value.to_string());
@@ -57,7 +57,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_CHECKPOINT_FREQ_SECONDS",
+        env_var: "FREELAY_SERVER_CHECKPOINT_FREQ_SECONDS",
         config_path: "server.checkpoint_freq_seconds",
         apply: |config, value| {
             let freq: u64 = value.parse().map_err(|_| {
@@ -71,7 +71,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_DOC_GC",
+        env_var: "FREELAY_SERVER_DOC_GC",
         config_path: "server.doc_gc",
         apply: |config, value| {
             let gc_enabled = match value.to_lowercase().as_str() {
@@ -89,7 +89,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_REDACT_ERRORS",
+        env_var: "FREELAY_SERVER_REDACT_ERRORS",
         config_path: "server.redact_errors",
         apply: |config, value| {
             let redact = match value.to_lowercase().as_str() {
@@ -107,7 +107,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_ALLOWED_HOSTS",
+        env_var: "FREELAY_SERVER_ALLOWED_HOSTS",
         config_path: "server.allowed_hosts",
         apply: |config, value| {
             let hosts: Vec<String> = value.split(',').map(|s| s.trim().to_string()).collect();
@@ -117,10 +117,10 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_AUTH",
+        env_var: "FREELAY_SERVER_AUTH",
         config_path: "auth",
         apply: |config, value| {
-            let key_id = std::env::var("RELAY_SERVER_KEY_ID").ok();
+            let key_id = std::env::var("FREELAY_SERVER_KEY_ID").ok();
             let (key, allowed_token_types) = parse_auth_env_value(value)?;
             let has_private_key = config
                 .auth
@@ -140,7 +140,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_STORAGE",
+        env_var: "FREELAY_SERVER_STORAGE",
         config_path: "store",
         apply: |config, value| {
             if value.starts_with("s3://") {
@@ -186,7 +186,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_WEBHOOK_CONFIG",
+        env_var: "FREELAY_SERVER_WEBHOOK_CONFIG",
         config_path: "webhooks",
         apply: |config, value| {
             let webhooks: Vec<CoreWebhookConfig> = serde_json::from_str(value).map_err(|e| {
@@ -205,7 +205,7 @@ static ENV_OVERRIDES: &[EnvOverride] = &[
         },
     },
     EnvOverride {
-        env_var: "RELAY_SERVER_LOG_FORMAT",
+        env_var: "FREELAY_SERVER_LOG_FORMAT",
         config_path: "logging.format",
         apply: |config, value| {
             config.logging.format = value.to_string();
@@ -353,7 +353,7 @@ fn all_token_types() -> Vec<TokenType> {
     ]
 }
 
-/// Parse a `RELAY_SERVER_AUTH` value which may include a scope suffix.
+/// Parse a `FREELAY_SERVER_AUTH` value which may include a scope suffix.
 ///
 /// Format: `<base64_key>` or `<base64_key>:<scope>`
 ///
@@ -373,7 +373,7 @@ fn parse_auth_env_value(value: &str) -> Result<(String, Vec<TokenType>), ConfigE
                     "prefix" => token_types.push(TokenType::Prefix),
                     other => {
                         return Err(ConfigError::InvalidConfiguration(format!(
-                            "Unknown token type '{}' in RELAY_SERVER_AUTH scope. Valid types: server, document, file, prefix",
+                            "Unknown token type '{}' in FREELAY_SERVER_AUTH scope. Valid types: server, document, file, prefix",
                             other
                         )));
                     }
@@ -590,7 +590,7 @@ fn default_s3_region() -> String {
 }
 
 fn default_presigned_url_expiration() -> u64 {
-    3600
+    900
 }
 
 fn default_log_level() -> String {
@@ -716,8 +716,8 @@ impl Config {
     pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
         let mut config = if let Some(path) = path {
             Self::from_file(path)?
-        } else if Path::new("relay.toml").exists() {
-            Self::from_file(Path::new("relay.toml"))?
+        } else if Path::new("freelay.toml").exists() {
+            Self::from_file(Path::new("freelay.toml"))?
         } else {
             Self::default()
         };
@@ -752,9 +752,8 @@ impl Config {
         for override_def in ENV_OVERRIDES {
             if let Ok(value) = env::var(override_def.env_var) {
                 tracing::info!(
-                    "Config override: {} = {} (from {})",
+                    "Config override: {} (from {})",
                     override_def.config_path,
-                    value,
                     override_def.env_var
                 );
 
@@ -1031,7 +1030,7 @@ mod tests {
             .collect();
 
         // Clear all auth-related vars first
-        for key in &["RELAY_SERVER_AUTH", "RELAY_SERVER_KEY_ID"] {
+        for key in &["FREELAY_SERVER_AUTH", "FREELAY_SERVER_KEY_ID"] {
             env::remove_var(key);
         }
 
@@ -1061,13 +1060,13 @@ mod tests {
     fn test_relay_server_auth_adds_to_empty_config() {
         with_env_vars(
             vec![
-                ("RELAY_SERVER_AUTH", Some("test-auth-key")),
-                ("RELAY_SERVER_KEY_ID", Some("test-key-id")),
+                ("FREELAY_SERVER_AUTH", Some("test-auth-key")),
+                ("FREELAY_SERVER_KEY_ID", Some("test-key-id")),
             ],
             || {
                 let config = Config::from_env_only().unwrap();
 
-                // Should have one auth entry from RELAY_SERVER_AUTH
+                // Should have one auth entry from FREELAY_SERVER_AUTH
                 assert_eq!(config.auth.len(), 1);
                 assert_eq!(config.auth[0].key_id, Some("test-key-id".to_string()));
                 assert!(config.auth[0].private_key.is_some());
@@ -1102,8 +1101,8 @@ public_key = "test-public-key-2"
 
         with_env_vars(
             vec![
-                ("RELAY_SERVER_AUTH", Some("env-private-key")),
-                ("RELAY_SERVER_KEY_ID", Some("env-key")),
+                ("FREELAY_SERVER_AUTH", Some("env-private-key")),
+                ("FREELAY_SERVER_KEY_ID", Some("env-key")),
             ],
             || {
                 config.apply_env_overrides().unwrap();
@@ -1165,8 +1164,8 @@ public_key = "test-public-key"
 
         with_env_vars(
             vec![
-                ("RELAY_SERVER_AUTH", Some("new-private-key")),
-                ("RELAY_SERVER_KEY_ID", Some("new-private")),
+                ("FREELAY_SERVER_AUTH", Some("new-private-key")),
+                ("FREELAY_SERVER_KEY_ID", Some("new-private")),
             ],
             || {
                 config.apply_env_overrides().unwrap();

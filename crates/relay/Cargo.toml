@@ -1,12 +1,20 @@
 [package]
-name = "relay"
-version = "0.9.6"
+name = "freelay-server"
+version = "0.1.0-beta.1"
 edition = "2021"
-description = "Self-hosted document collaboration server for the Relay.md network"
+description = "Self-hosted Freelay collaboration and Ed25519 control plane"
 license = "MIT"
-homepage = "https://relay.md"
-repository = "https://github.com/no-instructions/relay-server"
+homepage = "https://github.com/thesilverage/freelay-server"
+repository = "https://github.com/thesilverage/freelay-server"
 build = "build.rs"
+
+# Keep the upstream Rust module boundary stable while renaming the product.
+[lib]
+name = "relay"
+
+[[bin]]
+name = "freelay"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.72"
@@ -41,8 +49,15 @@ p256 = "0.13.2"
 ed25519-dalek = { version = "2.1.1", features = ["pkcs8", "pem"] }
 sha2 = "0.10"
 tempfile = "3.8.1"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+coset = "0.3"
+uuid = { version = "1", features = ["v4"] }
+tower-http = { version = "0.6", features = ["cors"] }
+fs2 = "0.4"
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 http = "1.1.0"
 tempfile = "3.8.1"
 tokio = { version = "1.29.1", features = ["test-util"] }

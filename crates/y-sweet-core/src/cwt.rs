@@ -1059,6 +1059,18 @@ pub fn scope_to_permission(scope: &str) -> Result<Permission, CwtError> {
                 user: None,
             }))
         }
+        // Optional signed transfer constraints. Keep legacy four-part scopes
+        // unchanged; Freelay uses this extension so S3 URLs bind size and type.
+        ["file", file_hash, doc_id, auth_str, length, encoded_type] => {
+            let base = format!("file:{file_hash}:{doc_id}:{auth_str}");
+            let Permission::File(mut permission) = scope_to_permission(&base)? else {
+                return Err(CwtError::InvalidClaims);
+            };
+            permission.content_length = Some(length.parse().map_err(|_|CwtError::InvalidClaims)?);
+            let bytes = crate::auth::b64_decode(encoded_type).map_err(|_|CwtError::InvalidClaims)?;
+            permission.content_type = Some(String::from_utf8(bytes).map_err(|_|CwtError::InvalidClaims)?);
+            Ok(Permission::File(permission))
+        }
         ["prefix", prefix, auth_str] => {
             let authorization = match *auth_str {
                 "r" => Authorization::ReadOnly,

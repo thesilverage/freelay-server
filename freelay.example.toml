@@ -1,0 +1,24 @@
+# Create the parent directory for database before starting. Paths are relative
+# to the process working directory, not to this configuration file.
+[server]
+url = "http://127.0.0.1:8080/"
+host = "127.0.0.1"
+port = 8080
+checkpoint_freq_seconds = 10
+
+[store]
+type = "filesystem"
+path = "./data/objects"
+
+[control]
+database = "./data/control.sqlite"
+# Copy public keys from the plugin's "Show public key" button.
+# No client private key and no persistent token-signing key belong here.
+owners = []
+token_ttl_seconds = 900
+minimum_free_bytes = 1073741824
+max_attachment_bytes = 262144000
+read_only = false
+# Desktop native requests do not require CORS. Add only the exact origin(s)
+# needed by your mobile Obsidian runtime; neither "*" nor "null" is accepted.
+allowed_origins = []

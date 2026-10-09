@@ -4,3 +4,12 @@ target
 **/deps
 **/node_modules
 .auth*.env
+.env
+.env.*
+relay.toml
+freelay.toml
+data
+objects
+*.sqlite*
+*.db*
+*.log
